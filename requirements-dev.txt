@@ -1,0 +1,7 @@
+-r requirements.txt
+fastapi
+uvicorn
+mlflow
+great-expectations
+pytest
+ruff

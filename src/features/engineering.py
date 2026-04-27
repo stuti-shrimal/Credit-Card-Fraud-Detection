@@ -4,7 +4,7 @@ import pandas as pd
 V_COLS = [f"V{i}" for i in range(1, 29)]
 EXTREME_V_THRESHOLD = 3.0   # std devs; V-features are already standardised
 
-# Ordered list of every column this module adds — useful for downstream
+# Ordered list of every column this module adds  useful for downstream
 # selection without hard-coding column names elsewhere.
 ENGINEERED_COLS: list[str] = [
     # domain-specific
@@ -83,18 +83,18 @@ def _add_statistical_features(df: pd.DataFrame) -> None:
 
     # Standard deviation across the 28 components for a single transaction.
     # A very narrow spread suggests the transaction activates only a small
-    # subset of PCA dimensions — an unusual pattern worth flagging.
+    # subset of PCA dimensions  an unusual pattern worth flagging.
     df["v_std"] = v.std(axis=1)
 
     # Euclidean distance from the PCA origin. Because the legitimate
     # transactions were used to define the PCA axes, fraud observations
-    # typically sit further from the origin — this scalar summarises that
+    # typically sit further from the origin  this scalar summarises that
     # distance without requiring the model to reason over 28 dimensions.
     df["v_l2_norm"] = np.sqrt((v ** 2).sum(axis=1))
 
     # Max minus min of the V values for one transaction. A very wide range
     # means some components are strongly positive while others are strongly
-    # negative — a signature of transactions that sit in "unusual corners"
+    # negative  a signature of transactions that sit in "unusual corners"
     # of the PCA space simultaneously.
     df["v_range"] = v.max(axis=1) - v.min(axis=1)
 
@@ -150,7 +150,7 @@ def select_features(
     # A near-constant feature carries almost no information: its variance is
     # close to zero, so it cannot discriminate between classes.  We flag any
     # feature whose variance falls below `variance_floor_ratio` times the mean
-    # variance across all candidates — a relative threshold that adapts to the
+    # variance across all candidates  a relative threshold that adapts to the
     # scale of the dataset rather than requiring a hand-picked absolute value.
     variances = df[candidates].var()
     # Median is used instead of mean so that one extreme-scale column (e.g.
@@ -170,7 +170,7 @@ def select_features(
     # redundant: including both inflates dimensionality without adding signal
     # and can destabilise coefficient-based models.  We iterate the upper
     # triangle of the correlation matrix and, for each offending pair, drop the
-    # column that appears *later* in the column order — i.e. we keep the first
+    # column that appears *later* in the column order  i.e. we keep the first
     # feature encountered (original columns first, then engineered ones).
     corr_matrix = df[survivors].corr().abs()
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape, dtype=bool), k=1))
@@ -206,24 +206,24 @@ def _log_selection(
     high_cor = [(c, r) for c, r in dropped if r.startswith("corr")]
 
     print(f"\n{'─'*60}")
-    print(f"Feature selection report")
+    print("Feature selection report")
     print(f"{'─'*60}")
     print(f"Overall median variance  : {overall_median_var:.6f}")
     print(f"Variance floor (×{VARIANCE_FLOOR_RATIO})    : {variance_threshold:.6f}")
 
     if low_var:
-        print(f"\nDropped — low variance ({len(low_var)}):")
+        print(f"\nDropped  low variance ({len(low_var)}):")
         for col, reason in low_var:
             print(f"  ✗  {col:<28}  {reason}")
     else:
-        print("\nDropped — low variance (0): none")
+        print("\nDropped  low variance (0): none")
 
     if high_cor:
-        print(f"\nDropped — high correlation ({len(high_cor)}):")
+        print(f"\nDropped  high correlation ({len(high_cor)}):")
         for col, reason in high_cor:
             print(f"  ✗  {col:<28}  {reason}")
     else:
-        print(f"\nDropped — high correlation (0): none")
+        print("\nDropped  high correlation (0): none")
 
     print(f"\nRetained : {len(survivors)} features  (+ target '{target}')")
     print(f"{'─'*60}\n")

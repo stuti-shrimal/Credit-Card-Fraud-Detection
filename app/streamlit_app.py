@@ -599,7 +599,10 @@ def load_features_sample(n: int = 50_000) -> pd.DataFrame | None:
     path = DATA_DIR / "features.csv"
     if not path.exists():
         return None
-    df = pd.read_csv(path, dtype=np.float32)
+    try:
+        df = pd.read_csv(path, dtype=np.float32, low_memory=True)
+    except (OSError, ValueError, pd.errors.ParserError, TypeError):
+        return None
     num = df.select_dtypes(include="number")
     if "Class" not in num.columns:
         return None
@@ -727,6 +730,47 @@ This reduces manual workload significantly
         """
     )
 
+    st.markdown("**Understanding the Data**")
+    prose(
+        """
+        Behind this model is a real-world dataset of credit card transactions, where the challenge is not just prediction — but detecting a needle in a haystack.
+
+        The dataset contains over 284,000 transactions, but only 492 of them are fraud. That means fraud represents just 0.17% of all activity.
+
+        In practical terms, this is what makes fraud detection hard:
+        a model can be 99.8% “accurate” and still miss every fraudulent transaction.
+        """
+    )
+
+    section("About the dataset")
+    prose(
+        """
+        This project uses a real-world dataset of credit card transactions made by European cardholders in September 2013.
+
+        It contains over 284,000 transactions across two days, but only 492 are fraud — just 0.17% of the data.
+
+        This extreme imbalance makes fraud detection challenging: a model can appear highly accurate while still missing most fraudulent activity.
+
+        To protect privacy, all features (V1–V28) are transformed using PCA, meaning they represent anonymized transaction patterns rather than raw inputs. Only Time and Amount remain in their original form.
+
+        Because of this, evaluation focuses on precision, recall, F1 score, and AUPRC — metrics that reflect real-world fraud detection performance.
+        """
+    )
+    callout(
+        "<strong>Why this matters:</strong><br>"
+        "Fraud detection is not about accuracy — it's about catching rare events without overwhelming systems with false alarms.",
+        "callout-amber",
+    )
+    st.markdown(
+        """
+To protect confidentiality, the dataset has been transformed using PCA:
+- V1–V28 represent anonymized behavioral patterns
+- Time captures transaction timing
+- Amount represents transaction value
+- Class indicates fraud (1) or legitimate (0)
+        """
+    )
+
     section("Key numbers")
     st.caption("Plain-language KPIs. Deltas compare the tuned winner to the logistic baseline.")
     r1, r2, r3, r4 = st.columns(4)
@@ -843,9 +887,22 @@ def page_eda() -> None:
 
     df = load_features_sample(50_000)
     if df is None:
+        feat_path = DATA_DIR / "features.csv"
         st.warning(
-            "Place `data/features.csv` in the project (run `python src/features/run_features.py`) "
-            "to enable the full EDA page. Showing target distribution from `predictions.csv` only."
+            "Full EDA needs `data/features.csv`. Showing target distribution from `predictions.csv` only."
+        )
+        st.markdown(
+            """
+**How to enable the full EDA page**
+
+1. **Local run** — from the **project root** (so `data/` is correct), regenerate features:
+   ```text
+   PYTHONPATH=src python src/features/run_features.py
+   ```
+   Requires raw data under `data/` (e.g. `creditcard.csv`, `cleaned.csv`, or `creditcard*.csv`).
+
+2. **Docker** — `docker-compose.yml` mounts **`./data` → `/app/data`**. That **replaces** the `data/` folder from the image with whatever is on your host. Put **`features.csv`** (and any other CSVs you need) into **`./data`** on your machine, *or* comment out the `data` volume if you want to use the files baked into the image.
+            """
         )
         preds = load_predictions()
         if "Class" in preds.columns:
@@ -972,6 +1029,76 @@ This chart compares how the feature **{feat}** behaves for fraud vs normal trans
 It shows which raw signals actually move with fraud so teams invest in the right data and controls.
         """
     )
+
+    section("Fraud by time of day")
+    st.caption("Circular bar chart showing how fraud incidents vary across 24 hours.")
+    if "hour_of_day" in df.columns:
+        hour = pd.to_numeric(df["hour_of_day"], errors="coerce")
+    elif "Time" in df.columns:
+        t = pd.to_numeric(df["Time"], errors="coerce")
+        hour = (t % 86_400) / 3_600
+    else:
+        hour = None
+
+    if hour is None or hour.dropna().empty:
+        st.info("No time field found in `features.csv` (expected `hour_of_day` or `Time`).")
+    else:
+        hour_int = np.floor(hour).clip(0, 23).astype("Int64")
+        fraud_by_hour = (
+            df.assign(_hour=hour_int)
+            .loc[df["Class"] == 1, "_hour"]
+            .value_counts(dropna=True)
+            .reindex(list(range(24)), fill_value=0)
+            .sort_index()
+        )
+        theta_labels = [f"{h:02d}:00" for h in range(24)]
+        # 24 equal slices: 360/24 = 15 degrees each (same idea as width≈2π/24 in Matplotlib).
+        theta_deg = [h * (360.0 / 24.0) for h in range(24)]
+        fig = go.Figure(
+            go.Barpolar(
+                r=fraud_by_hour.to_list(),
+                theta=theta_deg,
+                thetaunit="degrees",
+                marker_color=GREEN,
+                marker_line_color="#0b1120",
+                marker_line_width=0.8,
+                opacity=0.9,
+                width=15.0,
+                hoverinfo="skip",
+            )
+        )
+        fig.update_layout(
+            template=TMPL,
+            height=520,
+            title="Circular bar plot of fraud by hour",
+            showlegend=False,
+            margin=dict(t=60, b=30, l=20, r=20),
+            polar=dict(
+                bgcolor="rgba(0,0,0,0)",
+                radialaxis=dict(showline=False, showticklabels=False, ticks="", gridcolor="rgba(148,163,184,0.25)"),
+                angularaxis=dict(
+                    direction="clockwise",
+                    rotation=90,
+                    tickmode="array",
+                    tickvals=theta_deg,
+                    ticktext=theta_labels,
+                    gridcolor="rgba(148,163,184,0.20)",
+                ),
+            ),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown(
+            """
+**What this means:**  
+This shows when fraud happens most often across the day (based on the dataset’s time field).
+
+- Bigger bars = more fraud around that hour  
+- Useful for staffing (analyst coverage), rule timing, and monitoring spikes
+
+**Why this matters for business:**  
+Time-of-day patterns can reveal “quiet hour” fraud behavior and help set smarter controls.
+            """
+        )
 
     section("Correlation heatmap (top signals)")
     corr_ser = df.corr(numeric_only=True)["Class"].drop("Class", errors="ignore").dropna()
@@ -1135,6 +1262,7 @@ Strong AUC supports ranked review queues analysts tackle the highest-risk paymen
         fi_df = pd.DataFrame(res.get("feature_importance", DEFAULT_RESULTS["feature_importance"]))
         if fi_df.empty:
             fi_df = pd.DataFrame(DEFAULT_RESULTS["feature_importance"])
+        fi_df = fi_df.rename(columns={"feature": "Feature", "importance": "Importance"})
     fi_plot = fi_df.sort_values("Importance", ascending=True)
     fig = px.bar(
         fi_plot,
@@ -1199,6 +1327,63 @@ It maps model errors to dollars and customer experience: missed fraud vs unneces
             "False negatives are missed fraud; false positives annoy good customers."
         )
 
+    section("Choosing the right threshold")
+    thresh = st.slider("Decision threshold", 0.0, 1.0, 0.5, 0.01, key="decision_threshold")
+    st.markdown(
+        """
+- **Lower threshold** → catch more fraud (higher recall) but more false alerts  
+- **Higher threshold** → fewer false alarms but more missed fraud  
+        """
+    )
+
+    score_col = None
+    for c in ("fraud_probability", "proba", "probability", "y_score", "score"):
+        if c in preds.columns:
+            score_col = c
+            break
+    if "Class" not in preds.columns or score_col is None:
+        st.info("Add `Class` and a probability column (e.g. `fraud_probability`) to `data/predictions.csv` to tune thresholds.")
+        cm_t = None
+        fp_t = fn_t = tp_t = None
+    else:
+        y_true = preds["Class"].astype(int).to_numpy()
+        y_score = pd.to_numeric(preds[score_col], errors="coerce").fillna(0.0).clip(0.0, 1.0).to_numpy()
+        y_pred_t = (y_score >= float(thresh)).astype(int)
+        cm_t = confusion_matrix(y_true, y_pred_t, labels=[0, 1])
+        tn_t, fp_t, fn_t, tp_t = cm_t.ravel()
+        precision_t = tp_t / max(1, (tp_t + fp_t))
+        recall_t = tp_t / max(1, (tp_t + fn_t))
+        total_fraud = int((y_true == 1).sum())
+
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("Precision", f"{precision_t:.1%}")
+        with m2:
+            st.metric("Recall", f"{recall_t:.1%}")
+        with m3:
+            st.metric("Fraud caught", f"{tp_t:,}", help="True positives at this threshold.")
+        with m4:
+            st.metric("Total fraud in set", f"{total_fraud:,}")
+
+    section("Business cost of errors")
+    st.markdown(
+        """
+- False Negative (missed fraud) → Direct financial loss  
+- False Positive (false alert) → Customer friction + lost trust  
+        """
+    )
+    if fp_t is not None and fn_t is not None:
+        fraud_loss = int(fn_t) * 1000  # assume avg fraud = $1000
+        false_alert_cost = int(fp_t) * 10
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Estimated fraud loss", f"${fraud_loss:,}")
+        with c2:
+            st.metric("Operational cost of alerts", f"${false_alert_cost:,}")
+        st.caption("Assumptions: average missed fraud = $1,000; operational cost per false alert = $10.")
+    else:
+        st.caption("Enable threshold tuning above to see estimated costs from false negatives/false positives.")
+
     section("Try it yourself")
     if model is None:
         st.info(
@@ -1207,18 +1392,47 @@ It maps model errors to dollars and customer experience: missed fraud vs unneces
         )
         return
 
+    preset = st.selectbox(
+        "Scenario",
+        ["Normal transaction", "Suspicious high amount", "Night-time anomaly"],
+        key="scenario_preset",
+    )
+    if st.session_state.get("_last_scenario_preset") != preset:
+        st.session_state["_last_scenario_preset"] = preset
+        if preset == "Normal transaction":
+            st.session_state["demo_amount"] = 40.0
+            st.session_state["demo_hour"] = 14.0
+            st.session_state["demo_v14"] = 0.0
+            st.session_state["demo_v17"] = 0.0
+            st.session_state["demo_v10"] = 0.0
+            st.session_state["demo_v4"] = 0.0
+        elif preset == "Suspicious high amount":
+            st.session_state["demo_amount"] = 3500.0
+            st.session_state["demo_hour"] = 16.0
+            st.session_state["demo_v14"] = -3.5
+            st.session_state["demo_v17"] = -2.2
+            st.session_state["demo_v10"] = -1.8
+            st.session_state["demo_v4"] = 1.6
+        else:  # Night-time anomaly
+            st.session_state["demo_amount"] = 950.0
+            st.session_state["demo_hour"] = 2.0
+            st.session_state["demo_v14"] = -4.5
+            st.session_state["demo_v17"] = -3.0
+            st.session_state["demo_v10"] = -2.5
+            st.session_state["demo_v4"] = 2.2
+
     st.caption("Adjust values, then submit. Other features default to neutral zeros; this is a simplified demo.")
     with st.form("predict"):
         a, b, c = st.columns(3)
         with a:
-            amount = st.number_input("Amount ($)", 0.01, 25_000.0, 120.0, step=1.0)
-            hour = st.slider("Hour of day", 0.0, 23.9, 14.0, 0.1)
+            amount = st.number_input("Amount ($)", 0.01, 25_000.0, float(st.session_state.get("demo_amount", 120.0)), step=1.0, key="demo_amount")
+            hour = st.slider("Hour of day", 0.0, 23.9, float(st.session_state.get("demo_hour", 14.0)), 0.1, key="demo_hour")
         with b:
-            v14 = st.slider("V14", -25.0, 10.0, 0.0, 0.1)
-            v17 = st.slider("V17", -25.0, 10.0, 0.0, 0.1)
+            v14 = st.slider("V14", -25.0, 10.0, float(st.session_state.get("demo_v14", 0.0)), 0.1, key="demo_v14")
+            v17 = st.slider("V17", -25.0, 10.0, float(st.session_state.get("demo_v17", 0.0)), 0.1, key="demo_v17")
         with c:
-            v10 = st.slider("V10", -25.0, 10.0, 0.0, 0.1)
-            v4 = st.slider("V4", -10.0, 15.0, 0.0, 0.1)
+            v10 = st.slider("V10", -25.0, 10.0, float(st.session_state.get("demo_v10", 0.0)), 0.1, key="demo_v10")
+            v4 = st.slider("V4", -10.0, 15.0, float(st.session_state.get("demo_v4", 0.0)), 0.1, key="demo_v4")
         go_btn = st.form_submit_button("Score this transaction", type="primary")
 
     if go_btn:
@@ -1244,7 +1458,7 @@ It maps model errors to dollars and customer experience: missed fraud vs unneces
         cols = list(model.feature_names_in_)
         X = pd.DataFrame([{k: row.get(k, 0.0) for k in cols}])
         prob = float(model.predict_proba(X)[0, 1])
-        fraud = prob >= 0.5
+        fraud = prob >= float(st.session_state.get("decision_threshold", 0.5))
         left, right = st.columns([1, 1])
         with left:
             box = "pred-fraud" if fraud else "pred-ok"
@@ -1252,7 +1466,7 @@ It maps model errors to dollars and customer experience: missed fraud vs unneces
             st.markdown(
                 f'<div class="{box}"><div class="pred-head">{label}</div>'
                 f'<div class="pred-score">{prob:.1%}</div>'
-                '<div class="pred-note">Estimated probability of fraud (threshold 50%).</div></div>',
+                f'<div class="pred-note">Estimated probability of fraud (threshold {float(st.session_state.get("decision_threshold", 0.5)):.0%}).</div></div>',
                 unsafe_allow_html=True,
             )
         with right:
@@ -1427,6 +1641,38 @@ Handled class imbalance using class weights instead of oversampling before split
         """
     )
 
+    st.markdown(
+        """
+### Validation strategy
+
+- Used a train/test split **before** any balancing  
+- Avoided leakage from future transactions (no look-ahead features)  
+- Used class weighting instead of naive oversampling  
+        """
+    )
+
+    st.markdown(
+        """
+### Limitations
+
+- PCA features (V1–V28) are not directly interpretable  
+- We cannot explain fraud using real-world feature names (merchant category, device, geo, etc.)  
+- Real systems would use richer raw transaction metadata for stronger detection + explanations  
+        """
+    )
+
+    st.markdown(
+        """
+### What I would improve in production
+
+- Add real-time streaming using Kafka or Kinesis  
+- Implement a feature store for consistent training + inference  
+- Add model monitoring for drift detection  
+- Introduce threshold tuning based on business KPIs  
+- Build a human-in-the-loop feedback loop from fraud analysts  
+        """
+    )
+
     section("Challenges & learnings")
     st.markdown(
         """
@@ -1487,26 +1733,26 @@ def main() -> None:
             """,
             unsafe_allow_html=True,
         )
-        page = st.radio(
-            "Section",
-            ["Overview", "Explore the Data", "Model Results", "How I Built This"],
-            label_visibility="collapsed",
-        )
         st.markdown('<p class="glance-head">Outcomes at a glance</p>', unsafe_allow_html=True)
         res = load_model_results()
         win = res["models"][-1]
         st.markdown(_sidebar_glance_table_html(res, win), unsafe_allow_html=True)
 
-    routes = {
-        "Overview": page_overview,
-        "Explore the Data": page_eda,
-        "Model Results": page_model_results,
-        "How I Built This": page_build,
-    }
-    routes[page]()
+    tab_overview, tab_eda, tab_results, tab_build = st.tabs(
+        ["Overview", "Explore the Data", "Model Results", "How I Built This"]
+    )
+    with tab_overview:
+        page_overview()
+    with tab_eda:
+        page_eda()
+    with tab_results:
+        page_model_results()
+    with tab_build:
+        page_build()
 
     st.markdown(
-        '<div class="footer">Credit Card Fraud Detection  portfolio project · Streamlit · scikit-learn · XGBoost · Plotly</div>',
+        '<div class="footer">Credit Card Fraud Detection  portfolio project · Streamlit · scikit-learn · XGBoost · Plotly<br>'
+        '<a href="mailto:stutids@terpmail.umd.edu">Email</a> · <a href="https://www.linkedin.com/in/stuti-shrimal/" target="_blank" rel="noopener">LinkedIn</a></div>',
         unsafe_allow_html=True,
     )
 

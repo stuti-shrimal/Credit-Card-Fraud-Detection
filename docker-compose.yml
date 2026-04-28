@@ -4,5 +4,6 @@ services:
     ports:
       - "8501:8501"
     volumes:
+      # Host ./data hides image /app/data — include features.csv (and creditcard*.csv if regenerating) or EDA falls back to predictions-only.
       - ./data:/app/data
       - ./models:/app/models

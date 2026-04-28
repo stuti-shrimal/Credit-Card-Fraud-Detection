@@ -887,7 +887,6 @@ def page_eda() -> None:
 
     df = load_features_sample(50_000)
     if df is None:
-        feat_path = DATA_DIR / "features.csv"
         st.warning(
             "Full EDA needs `data/features.csv`. Showing target distribution from `predictions.csv` only."
         )

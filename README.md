@@ -1,6 +1,6 @@
 # Credit Card Fraud Detection
 
-**End-to-end ML system that scores transactions by fraud risk so analysts review the highest-risk cases first.** — [Live Demo](https://your-demo-link-here) *(placeholder)*
+**End-to-end ML system that scores transactions by fraud risk so analysts review the highest-risk cases first.** — [Live Demo](https://credit-card-fraud-detection-stuti.streamlit.app/)
 
 ---
 

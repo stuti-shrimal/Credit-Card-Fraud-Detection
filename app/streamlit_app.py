@@ -1385,12 +1385,15 @@ It maps model errors to dollars and customer experience: missed fraud vs unneces
         st.caption("Enable threshold tuning above to see estimated costs from false negatives/false positives.")
 
     section("Try it yourself")
-    if model is None:
-        st.info(
-            "Live scoring needs a saved model at `models/production_model.pkl` (or `xgboost.pkl`). "
-            "Without it, this section stays disabled so the app still loads for reviewers."
+    demo_mode = model is None
+    if demo_mode:
+        callout(
+            "<strong>Demo mode:</strong><br>"
+            "A saved model file wasn’t found on this deployment, so this section uses a lightweight "
+            "risk scoring formula for interactivity. Uploading <code>models/production_model.pkl</code> "
+            "will automatically enable true model scoring.",
+            "callout-amber",
         )
-        return
 
     preset = st.selectbox(
         "Scenario",
@@ -1455,9 +1458,24 @@ It maps model errors to dollars and customer experience: missed fraud vs unneces
             "v17_x_log_amount": v17 * log_amt,
             "v14_x_v17": v14 * v17,
         }
-        cols = list(model.feature_names_in_)
-        X = pd.DataFrame([{k: row.get(k, 0.0) for k in cols}])
-        prob = float(model.predict_proba(X)[0, 1])
+        if demo_mode:
+            # Simple, monotonic demo risk score for when the trained model file isn't present.
+            # Not a real prediction: intended only to keep the app interactive on fresh deployments.
+            night = 1.0 if (hour < 6.0 or hour > 22.0) else 0.0
+            z = (
+                -4.2
+                + 0.55 * np.log1p(amount)
+                + 0.65 * night
+                - 0.22 * v14
+                - 0.18 * v17
+                - 0.16 * v10
+                + 0.10 * v4
+            )
+            prob = float(1.0 / (1.0 + np.exp(-z)))
+        else:
+            cols = list(model.feature_names_in_)
+            X = pd.DataFrame([{k: row.get(k, 0.0) for k in cols}])
+            prob = float(model.predict_proba(X)[0, 1])
         fraud = prob >= float(st.session_state.get("decision_threshold", 0.5))
         left, right = st.columns([1, 1])
         with left:
